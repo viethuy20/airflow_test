@@ -1,0 +1,137 @@
+
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow -d airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  webserver:
+
+    build: .
+    image: my-custom-airflow:2.9.3
+          
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__WEBSERVER__SECRET_KEY: "69042ce0acc034ae12b764edb454baa73a2ddc0e861435e2a1f8d749131dc663"
+      AIRFLOW__API__AUTH_BACKEND: "airflow.api.auth.backend.basic_auth"
+      AIRFLOW_UID: 50000
+      AIRFLOW_GID: 0
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./config:/opt/airflow/config
+    ports:
+      - "8080:8080"
+    command: webserver
+    depends_on:
+      postgres:
+        condition: service_healthy
+      init_airflow:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type Webserver --hostname $${HOSTNAME}"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  scheduler:
+    build: .
+    image: my-custom-airflow:2.9.3
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__WEBSERVER__SECRET_KEY: "69042ce0acc034ae12b764edb454baa73a2ddc0e861435e2a1f8d749131dc663"
+      AIRFLOW__API__AUTH_BACKEND: "airflow.api.auth.backend.basic_auth"
+      AIRFLOW_UID: 50000
+      AIRFLOW_GID: 0
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+    command: scheduler
+    depends_on:
+      postgres:
+        condition: service_healthy
+      init_airflow:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type Scheduler --hostname $${HOSTNAME}"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  init_airflow:
+    build: .
+    image: my-custom-airflow:2.9.3
+    environment:
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__WEBSERVER__SECRET_KEY: "69042ce0acc034ae12b764edb454baa73a2ddc0e861435e2a1f8d749131dc663"
+      AIRFLOW__API__AUTH_BACKEND: "airflow.api.auth.backend.basic_auth"
+      AIRFLOW_UID: 50000
+      AIRFLOW_GID: 0
+      PGPASSWORD: airflow
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./init_airflow.sh:/usr/local/bin/init_airflow.sh
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+    command: ["bash", "-c", "/usr/local/bin/init_airflow.sh"]
+
+  minio:
+    image: minio/minio
+    container_name: minio
+    ports:
+      - "9000:9000"   # Console cũ
+      - "9001:9001"   # Console mới
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+
+  spark-master:
+    image: bitnami/spark:latest
+    container_name: spark-master
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+      - SPARK_MASTER_HOST=spark-master
+    ports:
+      - "7077:7077"   # Spark cluster
+      - "8081:8080"   # Spark master UI (localhost:8081)
+    depends_on:
+      - minio
+
+  spark-worker:
+    image: bitnami/spark:latest
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+    depends_on:
+      - spark-master
+      - minio
+    ports:
+      - "8082:8081"   # UI cho spark worker
+
+volumes:
+  pg_data: {}
+  minio-data:
