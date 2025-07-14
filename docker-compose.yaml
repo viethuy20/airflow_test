@@ -17,6 +17,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks: # <<< THÊM VÀO
+      - airflow-spark-net # <<< THÊM VÀO
 
   webserver:
 
@@ -24,10 +26,12 @@ services:
     image: my-custom-airflow:2.9.3
           
     environment:
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor   
       AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
       AIRFLOW__WEBSERVER__SECRET_KEY: "69042ce0acc034ae12b764edb454baa73a2ddc0e861435e2a1f8d749131dc663"
       AIRFLOW__API__AUTH_BACKEND: "airflow.api.auth.backend.basic_auth"
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres:5432/airflow
       AIRFLOW_UID: 50000
       AIRFLOW_GID: 0
     volumes:
@@ -47,15 +51,19 @@ services:
       interval: 10s
       timeout: 10s
       retries: 5
+    networks: # <<< THÊM VÀO
+      - airflow-spark-net # <<< THÊM VÀO
 
   scheduler:
     build: .
     image: my-custom-airflow:2.9.3
     environment:
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
       AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
       AIRFLOW__WEBSERVER__SECRET_KEY: "69042ce0acc034ae12b764edb454baa73a2ddc0e861435e2a1f8d749131dc663"
       AIRFLOW__API__AUTH_BACKEND: "airflow.api.auth.backend.basic_auth"
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres:5432/airflow
       AIRFLOW_UID: 50000
       AIRFLOW_GID: 0
     volumes:
@@ -72,6 +80,9 @@ services:
       interval: 10s
       timeout: 10s
       retries: 5
+    networks: # <<< THÊM VÀO
+      - airflow-spark-net # <<< THÊM VÀO
+
 
   init_airflow:
     build: .
@@ -91,6 +102,8 @@ services:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
     command: ["bash", "-c", "/usr/local/bin/init_airflow.sh"]
+    networks: # <<< THÊM VÀO
+      - airflow-spark-net # <<< THÊM VÀO
 
   minio:
     image: minio/minio
@@ -104,9 +117,11 @@ services:
     command: server /data --console-address ":9001"
     volumes:
       - minio-data:/data
+    networks: # <<< THÊM VÀO
+      - airflow-spark-net # <<< THÊM VÀO
 
   spark-master:
-    image: bitnami/spark:latest
+    image: bitnami/spark:3.5.3
     container_name: spark-master
     environment:
       - SPARK_MODE=master
@@ -120,9 +135,11 @@ services:
       - "8081:8080"   # Spark master UI (localhost:8081)
     depends_on:
       - minio
+    networks: # <<< THÊM VÀO
+      - airflow-spark-net # <<< THÊM VÀO
 
   spark-worker:
-    image: bitnami/spark:latest
+    image: bitnami/spark:3.5.3
     environment:
       - SPARK_MODE=worker
       - SPARK_MASTER_URL=spark://spark-master:7077
@@ -131,7 +148,42 @@ services:
       - minio
     ports:
       - "8082:8081"   # UI cho spark worker
+    networks: # <<< THÊM VÀO
+      - airflow-spark-net # <<< THÊM VÀO
+
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    networks:
+      - airflow-spark-net
+
+  worker:
+    build: .
+    image: my-custom-airflow:2.9.3
+    environment:
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0 # <<< THÊM VÀO
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres:5432/airflow # <<< THÊM VÀO
+      AIRFLOW_UID: 50000
+      AIRFLOW_GID: 0
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+    command: celery worker
+    depends_on:
+      - postgres
+      - redis
+      - init_airflow
+    networks:
+      - airflow-spark-net
 
 volumes:
   pg_data: {}
   minio-data:
+
+# Thêm vào cuối file docker-compose.yml của bạn
+networks:
+  airflow-spark-net:
+    driver: bridge

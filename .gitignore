@@ -3,3 +3,5 @@ dd.py
 xxxx.py
 env
 logs
+__pycache__
+*.pyc

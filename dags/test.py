@@ -3,7 +3,7 @@ from connect_db.connect_sql import connect_to_db , query_db
 import pendulum
 import sys
 import os
-from pyspark_file.connect_pyspark import create_dataframe
+from pyspark_file.connect_pyspark import create_dataframe,create_spark_session
 from airflow.providers.slack.operators.slack import SlackAPIOperator
 from airflow.providers.slack.operators.slack_webhook import SlackWebhookOperator
 from airflow.operators.email import EmailOperator
@@ -11,8 +11,9 @@ from airflow.utils.email import send_email
 import pandas as pd
 from airflow.models.dag import DAG
 from airflow.operators.bash import BashOperator
-from airflow.operators.python import PythonOperator
 from airflow.models import Connection
+from pyspark.sql import SparkSession
+
 DAG_DOC = """
 This is an example DAG that runs a simple Python function and a Bash command.   """
 SLACK_API_CONN_ID = 'slack_webhook_conn'
@@ -40,23 +41,40 @@ def send_notifi(context,success=True):
     doc_md=DAG_DOC,
 )
 def example_dag():
+
     @task
     def print_hello():
         print('heloo',sys.path)
-        
+
     @task()
     def get_data():
-        con = connect_to_db()
+        con = connect_to_db
         print("conn",con)
         if con:
+            import socket
+            driver_host = socket.gethostname()
+
             query = "SELECT * FROM actor LIMIT 5;"
             results, col = query_db(query)
-            df = create_dataframe(data=results, columns=col)
+            print(f"Results: {results}, Columns: {col}")
+            # df = create_dataframe(results, col)
+            # df = create_dataframe
+            spark = SparkSession.builder \
+                .appName("Airflow Spark Job") \
+                .master("spark://spark-master:7077") \
+                .config("spark.driver.host", driver_host) \
+                .config("spark.driver.memory", "2g") \
+                .config("spark.executor.memory", "2g") \
+                .config("spark.logConf", "true") \
+                .getOrCreate()
+            df = spark.createDataFrame(results, schema=col)
+            print(f"Spark version: {spark.version}")
+            spark.stop()
             return df
             
             # con.close()
         else:
-            return pd.DataFrame()  # Trả về DataFrame rỗng nếu không kết nối được
+            return spark.emptyDataFrame  # Trả về DataFrame rỗng nếu không kết nối được
             
     @task
     def print_goodbye():
@@ -106,7 +124,6 @@ def example_dag():
     connect_to_db_task = get_data()
     print_goodbye_task = print_goodbye()
     upload_to_minio_task = upload_to_minio(connect_to_db_task)
-
     print_hello_task  >> connect_to_db_task >> upload_to_minio_task >> print_goodbye_task
 
 test_dag = example_dag()

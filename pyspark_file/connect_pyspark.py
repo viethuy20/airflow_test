@@ -1,25 +1,26 @@
+import socket
 from pyspark.sql import SparkSession
+import logging
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def create_spark_session():
-    """
-    Create a Spark session with the necessary configurations.
-    """
-    spark = SparkSession.builder \
-        .appName("Connect to Spark") \
-        .master("spark://spark-master:7077") \
-        .config("spark.driver.host", "host.docker.internal") \
-        .getOrCreate()
-    return spark
-
-def create_dataframe(data=None, columns=None):
-    """
-    Create a sample DataFrame with some data.
-    """
-    spark = create_spark_session()
-    if data :
-        df = spark.createDataFrame(data, columns)
-    else:   
-        df = None
-    return df
-
+def create_dataframe():
+    try:
+        driver_host = socket.gethostname()
+        logger.info(f"Driver host: {driver_host}")
+        spark = SparkSession.builder \
+            .appName("Airflow Spark Job") \
+            .master("spark://spark-master:7077") \
+            .config("spark.driver.host", driver_host) \
+            .config("spark.driver.memory", "2g") \
+            .config("spark.executor.memory", "2g") \
+            .config("spark.logConf", "true") \
+            .getOrCreate()
+        logger.info(f"Spark version: {spark.version}")
+        return spark
+    except Exception as e:
+        logger.error(f"Error creating Spark session: {e}", exc_info=True)
+        raise
+    
+    

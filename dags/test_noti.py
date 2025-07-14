@@ -1,76 +1,59 @@
-from __future__ import annotations
-from connect_db.connect_sql import connect_to_db, query_db
-import pendulum
-from airflow.models.dag import DAG
-from airflow.operators.bash import BashOperator
+from airflow import DAG
+from airflow.operators.python import PythonVirtualenvOperator
 from airflow.operators.python import PythonOperator
-from airflow.operators.email import EmailOperator
-from airflow.decorators import task, dag
+from datetime import datetime
+import pendulum
 
-DAG_DOC = """
-This is an example DAG that runs a simple Python function and a Bash command.
-"""
-from airflow.hooks.base import BaseHook
-import smtplib
-from email.mime.text import MIMEText
+def spark_task():
+    import logging
+    import subprocess # Thư viện để chạy lệnh shell
 
-def send_mail(context, success=True):
-    # Lấy connection từ Airflow
-    conn = BaseHook.get_connection("smtp_gmail")
-    smtp_server = conn.host  # Lấy host (smtp.gmail.com)
-    smtp_port = conn.port    # Lấy port (587)
-    login = conn.login       # Lấy login (tranviethuy197@gmail.com)
-    password = conn.password # Lấy password (App Password)
+    # --- Phần thêm vào để kiểm tra thư viện ---
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
 
-    # Tạo email
-    msg = MIMEText("Đây là email test từ scheduler với connection Airflow.")
-    msg['Subject'] = "Test Email từ Scheduler với Airflow Connection"
-    msg['From'] = login  # Lấy email từ connection
-    msg['To'] = "vn-huy-tv@login.gmo-ap.jp"
+    logger.info("--- LIBS IN ISOLATED VENV ---")
+    try:
+        # Chạy lệnh 'pip freeze' từ bên trong code Python
+        result = subprocess.run(['pip', 'freeze'], capture_output=True, text=True, check=True)
+        # In kết quả ra log
+        logger.info(result.stdout)
+    except Exception as e:
+        logger.error(f"Could not run 'pip freeze': {e}")
+    logger.info("-----------------------------")
+    # --- Kết thúc phần thêm vào ---
+    from pyspark.sql import SparkSession
+    import logging
+
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
 
     try:
-        server = smtplib.SMTP(smtp_server, smtp_port)
-        server.starttls()
-        server.login(login, password)
-        server.sendmail(msg['From'], msg['To'], msg.as_string())
-        print("Kết nối và gửi email thành công")
-        server.quit()
+        spark = SparkSession.builder \
+            .appName("Airflow Spark Job") \
+            .master("spark://spark-master:7077") \
+            .config("spark.driver.host", "172.19.0.6") \
+            .config("spark.driver.bindAddress", "0.0.0.0") \
+            .config("spark.ui.port", "4056") \
+            .config("spark.driver.memory", "2g") \
+            .config("spark.executor.memory", "2g") \
+            .config("spark.logConf", "true") \
+            .getOrCreate()
+        logger.info(f"Spark version: {spark.version}")
+        print(f"Spark version: {spark.version}")
+        spark.stop()
     except Exception as e:
-        print(f"Lỗi: {e}")
+        logger.error(f"Error: {e}", exc_info=True)
+        raise
 
-@dag(
-    dag_id="example_dagxxx",
-    schedule="@daily",
-    start_date=pendulum.datetime(2023, 10, 1, tz="UTC"),
-    catchup=False,
-    tags=["example"],
-    doc_md=DAG_DOC,
-)
-def example_dag():
-    @task
-    def print_hello():
-        print("Hello, World!")
+with DAG(
+    'example_dagaa',
+    start_date=pendulum.datetime(2025, 7, 8, tz="UTC"),
+    schedule=None,
+) as dag:
+    spark_task_op = PythonOperator(
+        task_id='print_hello',
+        python_callable=spark_task,
 
-    @task(on_success_callback=send_mail)
-    def get_data():
-        con = connect_to_db()
-        print("conn", con)
-        if con:
-            query = "SELECT * FROM actor LIMIT 5;"
-            results = query_db(query)
-            return results
-        else:
-            print("Failed to connect to the data.")
-
-    @task
-    def print_goodbye():
-        print("Goodbye, World!")
-
-
-    print_hello_task = print_hello()
-    connect_to_db_task = get_data()
-    print_goodbye_task = print_goodbye()
-
-    print_hello_task >> connect_to_db_task >> print_goodbye_task
-
-test_dag = example_dag()
+   
+    )
